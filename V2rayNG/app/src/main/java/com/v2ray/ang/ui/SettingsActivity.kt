@@ -10,6 +10,7 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.AppConfig.VPN
 import com.v2ray.ang.R
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.RootManager
 import com.v2ray.ang.helper.MmkvPreferenceDataStore
 import com.v2ray.ang.util.Utils
 
@@ -61,6 +62,9 @@ class SettingsActivity : BaseActivity() {
             preferenceManager.preferenceDataStore = MmkvPreferenceDataStore()
 
             addPreferencesFromResource(R.xml.pref_settings)
+
+            // Populate run-mode options; root modes appear only on rooted devices.
+            applyModeOptions(RootManager.cachedRoot())
 
             initPreferenceSummaries()
 
@@ -162,6 +166,12 @@ class SettingsActivity : BaseActivity() {
 
         override fun onStart() {
             super.onStart()
+
+            // Re-probe root in the background and reveal root modes if available.
+            RootManager.refreshAsync { hasRoot ->
+                activity?.runOnUiThread { if (isAdded) applyModeOptions(hasRoot) }
+            }
+
             updateHevTunSettings(MmkvManager.decodeSettingsBool(AppConfig.PREF_USE_HEV_TUNNEL, true))
 
             // Initialize mode-dependent UI states
@@ -177,6 +187,34 @@ class SettingsActivity : BaseActivity() {
             updateFragment(MmkvManager.decodeSettingsBool(AppConfig.PREF_FRAGMENT_ENABLED, false))
 
             updateDynamicSocksPort(MmkvManager.decodeSettingsBool(AppConfig.PREF_DYNAMIC_SOCKS_PORT, false))
+        }
+
+        /**
+         * Build the run-mode list. The two non-root modes are always present; the root
+         * modes are added only when root is available. If the persisted mode is no longer
+         * offered (e.g. root was lost), it is reset to VPN so non-root stays locked to VPN.
+         */
+        private fun applyModeOptions(hasRoot: Boolean) {
+            val values = mutableListOf(AppConfig.MODE_VPN, AppConfig.MODE_PROXY_ONLY)
+            val labels = mutableListOf(getString(R.string.mode_vpn), getString(R.string.mode_proxy_only))
+            if (hasRoot) {
+                values += AppConfig.MODE_REDIRECT; labels += getString(R.string.mode_redirect)
+                values += AppConfig.MODE_TUN2SOCKS; labels += getString(R.string.mode_tun2socks)
+                values += AppConfig.MODE_TPROXY; labels += getString(R.string.mode_tproxy)
+            }
+            mode?.entryValues = values.toTypedArray()
+            mode?.entries = labels.toTypedArray()
+
+            val current = MmkvManager.decodeSettingsString(AppConfig.PREF_MODE, AppConfig.MODE_VPN)
+            if (current !in values) {
+                MmkvManager.encodeSettings(AppConfig.PREF_MODE, AppConfig.MODE_VPN)
+                mode?.value = AppConfig.MODE_VPN
+                updateMode(AppConfig.MODE_VPN)
+            }
+            mode?.let { lp ->
+                val idx = lp.findIndexOfValue(lp.value)
+                lp.summary = if (idx >= 0) lp.entries[idx] else lp.value
+            }
         }
 
         private fun updateMode(value: String?) {

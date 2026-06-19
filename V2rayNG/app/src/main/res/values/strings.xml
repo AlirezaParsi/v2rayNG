@@ -284,6 +284,12 @@
     <string name="title_outbound_domain_resolve_method">Outbound domain pre-resolve method</string>
     <string name="title_mode">Mode</string>
     <string name="title_mode_help">Click me for more help</string>
+    <string name="mode_vpn">VPN</string>
+    <string name="mode_proxy_only">Proxy only</string>
+    <string name="mode_redirect">iptables REDIRECT (root)</string>
+    <string name="mode_tun2socks">Tun2socks (root)</string>
+    <string name="mode_tproxy">TPROXY (root)</string>
+    <string name="toast_root_required">Root access is required for this mode</string>
     <string name="title_language">Language</string>
     <string name="title_ui_settings">UI settings</string>
     <string name="title_pref_ui_mode_night">UI mode settings</string>

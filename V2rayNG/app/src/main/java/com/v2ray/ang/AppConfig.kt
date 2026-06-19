@@ -195,6 +195,22 @@ object AppConfig {
     const val VPN = "VPN"
     const val VPN_MTU = 1500
 
+    /** Run-mode values stored under [PREF_MODE]. VPN / PROXY_ONLY need no root. */
+    const val MODE_VPN = VPN
+    const val MODE_PROXY_ONLY = "Proxy only"
+    const val MODE_REDIRECT = "Redirect"
+    const val MODE_TUN2SOCKS = "Tun2socks"
+    const val MODE_TPROXY = "TPROXY"
+
+    /** Root (system-wide) mode runtime constants. */
+    const val ROOT_RUNTIME_DIR = "root"
+    const val ROOT_IPTABLES_CHAIN = "V2RAY_NG"
+    const val PORT_REDIRECT = "12346"
+    const val PORT_TPROXY = "12345"
+    const val ROOT_FWMARK = 255
+    const val ROOT_ROUTE_TABLE = 2024
+    const val ROOT_RULE_PRIORITY = 1000
+
     /** hev-sock5-tunnel read-write-timeout value */
     const val HEVTUN_RW_TIMEOUT = "300,60"
 

@@ -3,6 +3,7 @@ package com.v2ray.ang.core
 import android.content.Context
 import android.text.TextUtils
 import com.google.gson.JsonArray
+import com.google.gson.JsonObject
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.ConfigResult
 import com.v2ray.ang.dto.CoreConfigContext
@@ -12,6 +13,7 @@ import com.v2ray.ang.dto.entities.RulesetItem
 import com.v2ray.ang.enums.BalancerStrategyType
 import com.v2ray.ang.enums.CoreResolvedType
 import com.v2ray.ang.enums.EConfigType
+import com.v2ray.ang.enums.ERunMode
 import com.v2ray.ang.extension.isNotNullEmpty
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
@@ -37,7 +39,7 @@ object CoreConfigManager {
             if (configContext.isCustom) {
                 return buildV2rayCustomConfig(configContext)
             }
-            return toConfigResult(configContext, buildUnifiedConfig(configContext))
+            return applyRootModeInbounds(toConfigResult(configContext, buildUnifiedConfig(configContext)))
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to get V2ray config", e)
             return ConfigResult(
@@ -410,6 +412,53 @@ object CoreConfigManager {
             guid = configContext.guid,
             content = JsonUtil.toJsonPretty(v2rayConfig) ?: ""
         )
+    }
+
+    /**
+     * For the transparent root modes (REDIRECT / TPROXY) the core must expose a
+     * dokodemo-door inbound that the iptables rules feed traffic into. These fields are
+     * not expressible through the typed [V2rayConfig] inbound DTO, so the inbound is
+     * appended to the generated config as raw JSON.
+     */
+    private fun applyRootModeInbounds(result: ConfigResult): ConfigResult {
+        if (!result.status) return result
+        val mode = SettingsManager.getRunMode()
+        if (mode != ERunMode.REDIRECT && mode != ERunMode.TPROXY) return result
+
+        val json = JsonUtil.parseString(result.content) ?: return result
+        val inbounds = json.getAsJsonArray("inbounds")
+            ?: JsonArray().also { json.add("inbounds", it) }
+        inbounds.add(buildTransparentInbound(mode))
+        result.content = JsonUtil.toJsonPretty(json) ?: result.content
+        return result
+    }
+
+    private fun buildTransparentInbound(mode: ERunMode): JsonObject {
+        val tproxy = mode == ERunMode.TPROXY
+        val port = if (tproxy) AppConfig.PORT_TPROXY else AppConfig.PORT_REDIRECT
+        return JsonObject().apply {
+            addProperty("tag", "transparent")
+            addProperty("port", port.toInt())
+            addProperty("protocol", "dokodemo-door")
+            addProperty("listen", if (tproxy) "0.0.0.0" else AppConfig.LOOPBACK)
+            add("settings", JsonObject().apply {
+                addProperty("network", if (tproxy) "tcp,udp" else "tcp")
+                addProperty("followRedirect", true)
+                addProperty("timeout", 0)
+            })
+            if (tproxy) {
+                add("streamSettings", JsonObject().apply {
+                    add("sockopt", JsonObject().apply { addProperty("tproxy", "tproxy") })
+                })
+            }
+            add("sniffing", JsonObject().apply {
+                addProperty("enabled", true)
+                add("destOverride", JsonArray().apply {
+                    add("http"); add("tls"); add("quic")
+                })
+                addProperty("routeOnly", false)
+            })
+        }
     }
 
     /**
