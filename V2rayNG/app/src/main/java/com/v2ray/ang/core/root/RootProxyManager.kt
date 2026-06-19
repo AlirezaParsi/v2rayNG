@@ -98,6 +98,7 @@ object RootProxyManager {
         val pidFile = File(runDir, "tun2socks.pid").absolutePath
         val logFile = File(runDir, "tun2socks.log").absolutePath
         val ipv6 = MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED)
+        val lanShare = MmkvManager.decodeSettingsBool(AppConfig.PREF_ROOT_LAN_SHARING)
 
         return buildString {
             appendLine("set -e")
@@ -120,6 +121,10 @@ object RootProxyManager {
             appendLine("ip rule add fwmark $MARK table $TABLE priority $PRIORITY")
             // mark which packets go into the tun
             append(buildMangleMarking("iptables", appUid))
+            // optionally route hotspot / USB-tethered clients through the tun too
+            if (lanShare) {
+                append(buildLanShareSetup())
+            }
             if (ipv6) {
                 // IPv6 is best-effort: never fail the (working) IPv4 setup over it.
                 appendLine("set +e")
@@ -148,6 +153,49 @@ object RootProxyManager {
         }
     }
 
+    // -------------------------------------------------- LAN / tethering sharing
+
+    /**
+     * Route Wi-Fi-hotspot / USB-tethered clients through the tun as well (ipv4).
+     * Best-effort: wrapped in `set +e` so a failure here never breaks the working proxy.
+     * Mirrors Magic_V2Ray's hotspot rules (FORWARD accept, DNS DNAT, source-based policy
+     * routing for private client ranges, MSS clamp).
+     */
+    private fun buildLanShareSetup(): String {
+        val fwd = AppConfig.ROOT_FWD_CHAIN
+        val dns = AppConfig.ROOT_LAN_DNS
+        val lanCidrs = listOf("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+        return buildString {
+            appendLine("set +e")
+            appendLine("echo 1 > /proc/sys/net/ipv4/ip_forward 2>/dev/null || true")
+            // forward traffic to/from the tun
+            appendLine("iptables -N $fwd 2>/dev/null || true")
+            appendLine("iptables -F $fwd")
+            appendLine("iptables -A $fwd -i $TUN -j ACCEPT")
+            appendLine("iptables -A $fwd -o $TUN -j ACCEPT")
+            appendLine("iptables -D FORWARD -j $fwd 2>/dev/null || true")
+            appendLine("iptables -I FORWARD -j $fwd")
+            // clamp MSS to avoid TLS fragmentation overhead through the tunnel
+            appendLine("iptables -t mangle -D FORWARD -o $TUN -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1350 2>/dev/null || true")
+            appendLine("iptables -t mangle -A FORWARD -o $TUN -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1350")
+            // hijack tethered clients' DNS so it resolves through the tunnel
+            lanCidrs.forEach {
+                appendLine("iptables -t nat -A PREROUTING ! -i $TUN -d $it -p udp --dport 53 -j DNAT --to $dns")
+            }
+            // policy routing: return-path via main, LAN direct, the rest via the tun table
+            appendLine("ip rule add iif lo goto 6000 pref 5000 2>/dev/null || true")
+            appendLine("ip rule add iif $TUN lookup main suppress_prefixlength 0 pref 5010 2>/dev/null || true")
+            appendLine("ip rule add iif $TUN goto 6000 pref 5020 2>/dev/null || true")
+            appendLine("ip rule add to 10.0.0.0/8 lookup main pref 5025 2>/dev/null || true")
+            appendLine("ip rule add to 172.16.0.0/12 lookup main pref 5026 2>/dev/null || true")
+            appendLine("ip rule add to 192.168.0.0/16 lookup main pref 5027 2>/dev/null || true")
+            appendLine("ip rule add from 10.0.0.0/8 lookup $TABLE pref 5030 2>/dev/null || true")
+            appendLine("ip rule add from 172.16.0.0/12 lookup $TABLE pref 5040 2>/dev/null || true")
+            appendLine("ip rule add from 192.168.0.0/16 lookup $TABLE pref 5050 2>/dev/null || true")
+            appendLine("ip rule add nop pref 6000 2>/dev/null || true")
+        }
+    }
+
     // ---------------------------------------------------------------- teardown
 
     private fun buildTeardown(context: Context): String {
@@ -169,6 +217,17 @@ object RootProxyManager {
             appendLine("ip -6 rule del fwmark $MARK table $TABLE priority $PRIORITY 2>/dev/null || true")
             appendLine("ip route flush table $TABLE 2>/dev/null || true")
             appendLine("ip -6 route flush table $TABLE 2>/dev/null || true")
+            // LAN / tethering sharing (always cleaned, harmless if it was never set up)
+            appendLine("iptables -D FORWARD -j ${AppConfig.ROOT_FWD_CHAIN} 2>/dev/null || true")
+            appendLine("iptables -F ${AppConfig.ROOT_FWD_CHAIN} 2>/dev/null || true")
+            appendLine("iptables -X ${AppConfig.ROOT_FWD_CHAIN} 2>/dev/null || true")
+            appendLine("iptables -t mangle -D FORWARD -o $TUN -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1350 2>/dev/null || true")
+            for (cidr in listOf("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")) {
+                appendLine("iptables -t nat -D PREROUTING ! -i $TUN -d $cidr -p udp --dport 53 -j DNAT --to ${AppConfig.ROOT_LAN_DNS} 2>/dev/null || true")
+            }
+            for (pref in listOf(5000, 5010, 5020, 5025, 5026, 5027, 5030, 5040, 5050, 6000)) {
+                appendLine("ip rule del pref $pref 2>/dev/null || true")
+            }
             // tun device down + helper process
             appendLine("ip link set dev $TUN down 2>/dev/null || true")
             appendLine("[ -f '$pidFile' ] && kill \$(cat '$pidFile') 2>/dev/null || true")

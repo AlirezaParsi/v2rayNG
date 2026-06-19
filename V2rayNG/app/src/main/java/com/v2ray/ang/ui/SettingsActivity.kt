@@ -13,6 +13,7 @@ import androidx.preference.PreferenceFragmentCompat
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.AppConfig.VPN
 import com.v2ray.ang.R
+import com.v2ray.ang.enums.ERunMode
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RootManager
 import com.v2ray.ang.helper.MmkvPreferenceDataStore
@@ -47,6 +48,7 @@ class SettingsActivity : BaseActivity() {
         private val fragmentInterval by lazy { findPreference<EditTextPreference>(AppConfig.PREF_FRAGMENT_INTERVAL) }
 
         private val mode by lazy { findPreference<ListPreference>(AppConfig.PREF_MODE) }
+        private val lanSharing by lazy { findPreference<CheckBoxPreference>(AppConfig.PREF_ROOT_LAN_SHARING) }
 
         private val hevTunLogLevel by lazy { findPreference<ListPreference>(AppConfig.PREF_HEV_TUNNEL_LOGLEVEL) }
         private val hevTunRwTimeout by lazy { findPreference<EditTextPreference>(AppConfig.PREF_HEV_TUNNEL_RW_TIMEOUT) }
@@ -228,6 +230,9 @@ class SettingsActivity : BaseActivity() {
                 val idx = lp.findIndexOfValue(lp.value)
                 lp.summary = if (idx >= 0) lp.entries[idx] else lp.value
             }
+            // Refresh mode-dependent UI (incl. the LAN-sharing toggle) for the now-known
+            // root state — important when root is confirmed asynchronously after onStart.
+            updateMode(MmkvManager.decodeSettingsString(AppConfig.PREF_MODE, AppConfig.MODE_VPN))
         }
 
         /**
@@ -282,6 +287,9 @@ class SettingsActivity : BaseActivity() {
             vpnInterfaceAddress?.isEnabled = vpn
             vpnMtu?.isEnabled = vpn
             useHevTun?.isEnabled = vpn
+            // LAN / tethering sharing is only meaningful for root modes; greyed otherwise
+            // (and always greyed for non-root users).
+            lanSharing?.isEnabled = ERunMode.fromPref(value).needsRoot && RootManager.cachedRoot()
             updateHevTunSettings(false)
             if (vpn) {
                 updateLocalDns(
