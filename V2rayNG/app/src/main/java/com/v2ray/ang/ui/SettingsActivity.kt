@@ -97,15 +97,6 @@ class SettingsActivity : BaseActivity() {
                 true
             }
 
-            mode?.setOnPreferenceChangeListener { pref, newValue ->
-                val valueStr = newValue.toString()
-                (pref as? ListPreference)?.let { lp ->
-                    val idx = lp.findIndexOfValue(valueStr)
-                    lp.summary = if (idx >= 0) lp.entries[idx] else valueStr
-                }
-                updateMode(valueStr)
-                true
-            }
             // Show a custom chooser so root modes appear greyed-out (not hidden) for non-root.
             mode?.setOnPreferenceClickListener {
                 showModeDialog()
@@ -385,9 +376,5 @@ class SettingsActivity : BaseActivity() {
             }
             updateEnableLocalProxy(enableLocalProxy?.isChecked == true)
         }
-    }
-
-    fun onModeHelpClicked(view: View) {
-        Utils.openUri(this, AppConfig.APP_WIKI_MODE)
     }
 }
