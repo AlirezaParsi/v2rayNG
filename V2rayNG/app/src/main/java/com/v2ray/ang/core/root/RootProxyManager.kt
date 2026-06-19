@@ -6,6 +6,7 @@ import com.v2ray.ang.enums.ERunMode
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.util.LogUtil
+import com.v2ray.ang.util.PackageUidResolver
 import java.io.File
 
 /**
@@ -115,6 +116,16 @@ object RootProxyManager {
         val lanShare = forceLanShare || MmkvManager.decodeSettingsBool(AppConfig.PREF_ROOT_LAN_SHARING)
         val corePid = android.os.Process.myPid()
 
+        // Per-app proxy/bypass (mirrors what VpnService does via allowed/disallowed apps).
+        val perAppEnabled = MmkvManager.decodeSettingsBool(AppConfig.PREF_PER_APP_PROXY)
+        val bypassApps = MmkvManager.decodeSettingsBool(AppConfig.PREF_BYPASS_APPS)
+        val selectedUids = if (perAppEnabled) {
+            val pkgs = MmkvManager.decodeSettingsStringSet(AppConfig.PREF_PER_APP_PROXY_SET)?.toList().orEmpty()
+            if (pkgs.isNotEmpty()) PackageUidResolver.packageNamesToUids(context, pkgs) else emptyList()
+        } else {
+            emptyList()
+        }
+
         return buildString {
             appendLine("set -e")
             appendLine("BIN='${bin.absolutePath}'")
@@ -143,7 +154,7 @@ object RootProxyManager {
             appendLine("ip rule add fwmark $MARK table $TABLE priority $PRIORITY")
             // mark the device's own packets into the tun (Root mode only)
             if (captureDeviceTraffic) {
-                append(buildMangleMarking("iptables", appUid))
+                append(buildMangleMarking("iptables", appUid, perAppEnabled, bypassApps, selectedUids))
             }
             // optionally route hotspot / USB-tethered clients through the tun too
             if (lanShare) {
@@ -155,27 +166,53 @@ object RootProxyManager {
                 appendLine("ip -6 addr add ${AppConfig.ROOT_TUN_ADDR_V6} dev $TUN 2>/dev/null || true")
                 appendLine("ip -6 route replace default dev $TUN table $TABLE 2>/dev/null || true")
                 appendLine("ip -6 rule add fwmark $MARK table $TABLE priority $PRIORITY 2>/dev/null || true")
-                append(buildMangleMarking("ip6tables", appUid))
+                append(buildMangleMarking("ip6tables", appUid, perAppEnabled, bypassApps, selectedUids))
             }
         }
     }
 
-    /** mangle OUTPUT marking chain shared by the ipv4/ipv6 variants. */
-    private fun buildMangleMarking(cmd: String, appUid: Int): String {
+    /**
+     * mangle OUTPUT marking chain (ipv4/ipv6). Mirrors VpnService's capture behavior:
+     * - all-apps (no per-app): mark EVERY remaining uid (incl uid 0 + all system uids), so
+     *   nothing is missed;
+     * - bypass mode: the selected apps go fully direct, everything else is captured;
+     * - proxy mode: only the selected apps are captured.
+     */
+    private fun buildMangleMarking(
+        cmd: String,
+        appUid: Int,
+        perAppEnabled: Boolean,
+        bypassApps: Boolean,
+        selectedUids: List<String>,
+    ): String {
+        val proxyOnlySelected = perAppEnabled && !bypassApps && selectedUids.isNotEmpty()
+        val bypassSelected = perAppEnabled && bypassApps && selectedUids.isNotEmpty()
         return buildString {
             appendLine("$cmd -t mangle -N $CHAIN 2>/dev/null || true")
             appendLine("$cmd -t mangle -F $CHAIN")
             // tun2socks' own upstream traffic and the app's own core traffic must not loop.
             appendLine("$cmd -t mangle -A $CHAIN -m mark --mark $FWMARK -j RETURN")
             appendLine("$cmd -t mangle -A $CHAIN -m owner --uid-owner $appUid -j RETURN")
-            // Always route DNS (even to LAN/router resolvers) through the tun so the core
-            // resolves it — prevents DNS leaks and CDN mis-resolution (e.g. Instagram media).
-            appendLine("$cmd -t mangle -A $CHAIN -p udp --dport 53 -j MARK --set-xmark $MARK")
-            appendLine("$cmd -t mangle -A $CHAIN -p tcp --dport 53 -j MARK --set-xmark $MARK")
+            // bypass mode: selected apps go fully direct (incl their DNS)
+            if (bypassSelected) {
+                selectedUids.forEach { appendLine("$cmd -t mangle -A $CHAIN -m owner --uid-owner $it -j RETURN") }
+            }
+            // Route DNS through the core for the proxied population (prevents DNS leaks and
+            // CDN mis-resolution, e.g. Instagram media). Skipped in proxy-only mode, where
+            // only the selected uids' own traffic is captured.
+            if (!proxyOnlySelected) {
+                appendLine("$cmd -t mangle -A $CHAIN -p udp --dport 53 -j MARK --set-xmark $MARK")
+                appendLine("$cmd -t mangle -A $CHAIN -p tcp --dport 53 -j MARK --set-xmark $MARK")
+            }
+            // keep LAN / private destinations direct
             bypassCidrs.forEach { appendLine("$cmd -t mangle -A $CHAIN -d $it -j RETURN") }
-            // system services + regular apps -> push into the tun via fwmark routing
-            appendLine("$cmd -t mangle -A $CHAIN -m owner --uid-owner 1000 -j MARK --set-xmark $MARK")
-            appendLine("$cmd -t mangle -A $CHAIN -m owner --uid-owner 9999-2147483647 -j MARK --set-xmark $MARK")
+            if (proxyOnlySelected) {
+                // proxy only the selected apps
+                selectedUids.forEach { appendLine("$cmd -t mangle -A $CHAIN -m owner --uid-owner $it -j MARK --set-xmark $MARK") }
+            } else {
+                // all-apps / bypass: capture EVERY remaining uid (incl uid 0 + system uids)
+                appendLine("$cmd -t mangle -A $CHAIN -j MARK --set-xmark $MARK")
+            }
             appendLine("$cmd -t mangle -D OUTPUT -j $CHAIN 2>/dev/null || true")
             appendLine("$cmd -t mangle -A OUTPUT -j $CHAIN")
         }
