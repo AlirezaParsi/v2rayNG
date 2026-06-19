@@ -286,10 +286,11 @@
     <string name="title_mode_help">Click me for more help</string>
     <string name="mode_vpn">VPN</string>
     <string name="mode_proxy_only">Proxy only</string>
-    <string name="mode_redirect">iptables REDIRECT (root)</string>
-    <string name="mode_tun2socks">Tun2socks (root)</string>
-    <string name="mode_tproxy">TPROXY (root)</string>
+    <string name="mode_redirect">iptables REDIRECT (root users only)</string>
+    <string name="mode_tun2socks">Tun2socks (root users only)</string>
+    <string name="mode_tproxy">TPROXY (root users only)</string>
     <string name="toast_root_required">Root access is required for this mode</string>
+    <string name="summary_root_modes_locked">Root modes need root access</string>
     <string name="title_language">Language</string>
     <string name="title_ui_settings">UI settings</string>
     <string name="title_pref_ui_mode_night">UI mode settings</string>

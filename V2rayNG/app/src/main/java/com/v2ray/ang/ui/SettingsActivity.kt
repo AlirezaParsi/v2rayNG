@@ -2,6 +2,10 @@ package com.v2ray.ang.ui
 
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
+import android.widget.ArrayAdapter
+import android.widget.CheckedTextView
+import androidx.appcompat.app.AlertDialog
 import androidx.preference.CheckBoxPreference
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
@@ -63,7 +67,7 @@ class SettingsActivity : BaseActivity() {
 
             addPreferencesFromResource(R.xml.pref_settings)
 
-            // Populate run-mode options; root modes appear only on rooted devices.
+            // Populate run-mode options (root modes are greyed-out for non-root, not hidden).
             applyModeOptions(RootManager.cachedRoot())
 
             initPreferenceSummaries()
@@ -100,7 +104,11 @@ class SettingsActivity : BaseActivity() {
                 updateMode(valueStr)
                 true
             }
-            mode?.dialogLayoutResource = R.layout.preference_with_help_link
+            // Show a custom chooser so root modes appear greyed-out (not hidden) for non-root.
+            mode?.setOnPreferenceClickListener {
+                showModeDialog()
+                true
+            }
 
             useHevTun?.setOnPreferenceChangeListener { _, newValue ->
                 updateHevTunSettings(newValue as Boolean)
@@ -189,26 +197,29 @@ class SettingsActivity : BaseActivity() {
             updateDynamicSocksPort(MmkvManager.decodeSettingsBool(AppConfig.PREF_DYNAMIC_SOCKS_PORT, false))
         }
 
+        private data class ModeOption(val value: String, val labelRes: Int, val rootOnly: Boolean)
+
+        // Single source of truth for the offered run modes. All are always shown; root
+        // modes are greyed-out (not hidden) for non-root users.
+        // REDIRECT is intentionally retired (Tun2socks supersedes it, full TCP+UDP).
+        // TPROXY is not offered yet (needs a bundled root xray binary).
+        private val modeOptions = listOf(
+            ModeOption(AppConfig.MODE_VPN, R.string.mode_vpn, false),
+            ModeOption(AppConfig.MODE_PROXY_ONLY, R.string.mode_proxy_only, false),
+            ModeOption(AppConfig.MODE_TUN2SOCKS, R.string.mode_tun2socks, true),
+        )
+
         /**
-         * Build the run-mode list. The two non-root modes are always present; the root
-         * modes are added only when root is available. If the persisted mode is no longer
-         * offered (e.g. root was lost), it is reset to VPN so non-root stays locked to VPN.
+         * Keep the ListPreference's entries/values in sync and fall back to VPN if a root
+         * mode is selected without root (so non-root stays locked to non-root modes).
          */
         private fun applyModeOptions(hasRoot: Boolean) {
-            val values = mutableListOf(AppConfig.MODE_VPN, AppConfig.MODE_PROXY_ONLY)
-            val labels = mutableListOf(getString(R.string.mode_vpn), getString(R.string.mode_proxy_only))
-            if (hasRoot) {
-                values += AppConfig.MODE_REDIRECT; labels += getString(R.string.mode_redirect)
-                values += AppConfig.MODE_TUN2SOCKS; labels += getString(R.string.mode_tun2socks)
-                // TPROXY is intentionally not offered yet: it requires a bundled root xray
-                // binary (the in-process core runs as the app uid and cannot open
-                // IP_TRANSPARENT sockets). Tun2socks covers system-wide TCP+UDP for now.
-            }
-            mode?.entryValues = values.toTypedArray()
-            mode?.entries = labels.toTypedArray()
+            mode?.entryValues = modeOptions.map { it.value }.toTypedArray()
+            mode?.entries = modeOptions.map { getString(it.labelRes) }.toTypedArray()
 
             val current = MmkvManager.decodeSettingsString(AppConfig.PREF_MODE, AppConfig.MODE_VPN)
-            if (current !in values) {
+            val currentOpt = modeOptions.firstOrNull { it.value == current }
+            if (currentOpt == null || (currentOpt.rootOnly && !hasRoot)) {
                 MmkvManager.encodeSettings(AppConfig.PREF_MODE, AppConfig.MODE_VPN)
                 mode?.value = AppConfig.MODE_VPN
                 updateMode(AppConfig.MODE_VPN)
@@ -217,6 +228,47 @@ class SettingsActivity : BaseActivity() {
                 val idx = lp.findIndexOfValue(lp.value)
                 lp.summary = if (idx >= 0) lp.entries[idx] else lp.value
             }
+        }
+
+        /**
+         * Custom mode chooser: root-only modes render greyed-out and non-selectable when
+         * root is unavailable, instead of being hidden.
+         */
+        private fun showModeDialog() {
+            val ctx = context ?: return
+            val hasRoot = RootManager.cachedRoot()
+            val labels = modeOptions.map { getString(it.labelRes) }
+            val enabled = modeOptions.map { !it.rootOnly || hasRoot }
+            val current = MmkvManager.decodeSettingsString(AppConfig.PREF_MODE, AppConfig.MODE_VPN)
+            val checked = modeOptions.indexOfFirst { it.value == current }.coerceAtLeast(0)
+
+            val adapter = object : ArrayAdapter<String>(ctx, android.R.layout.simple_list_item_single_choice, labels) {
+                override fun areAllItemsEnabled() = false
+                override fun isEnabled(position: Int) = enabled[position]
+                override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                    val v = super.getView(position, convertView, parent)
+                    v.isEnabled = enabled[position]
+                    (v as? CheckedTextView)?.alpha = if (enabled[position]) 1f else 0.4f
+                    return v
+                }
+            }
+
+            AlertDialog.Builder(ctx)
+                .setTitle(R.string.title_mode)
+                .setSingleChoiceItems(adapter, checked) { dialog, which ->
+                    if (!enabled[which]) return@setSingleChoiceItems
+                    val opt = modeOptions[which]
+                    mode?.value = opt.value
+                    MmkvManager.encodeSettings(AppConfig.PREF_MODE, opt.value)
+                    updateMode(opt.value)
+                    mode?.summary = labels[which]
+                    dialog.dismiss()
+                }
+                .setNeutralButton(R.string.title_mode_help) { _, _ ->
+                    Utils.openUri(ctx, AppConfig.APP_WIKI_MODE)
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
         }
 
         private fun updateMode(value: String?) {
