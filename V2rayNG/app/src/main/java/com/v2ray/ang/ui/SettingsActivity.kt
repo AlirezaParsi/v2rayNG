@@ -280,10 +280,10 @@ class SettingsActivity : BaseActivity() {
             vpnInterfaceAddress?.isEnabled = vpn
             vpnMtu?.isEnabled = vpn
             useHevTun?.isEnabled = vpn
-            // LAN / tethering sharing is a root capability (independent of the run mode,
-            // since it can apply to VPN mode too), so gate it on root access. Greyed for
-            // non-root users.
-            lanSharing?.isEnabled = RootManager.cachedRoot()
+            // Transparent LAN / tethering sharing applies to VPN and Root modes (gated on
+            // root). Proxy-only already has its own "allow connections from other devices"
+            // option (PREF_PROXY_SHARING), so it's excluded here.
+            lanSharing?.isEnabled = RootManager.cachedRoot() && value != AppConfig.MODE_PROXY_ONLY
             updateHevTunSettings(false)
             if (vpn) {
                 updateLocalDns(

@@ -7,17 +7,12 @@ import android.os.IBinder
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.core.CoreServiceManager
-import com.v2ray.ang.core.root.RootProxyManager
-import com.v2ray.ang.handler.MmkvManager
-import com.v2ray.ang.handler.RootManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.MyContextWrapper
 import java.lang.ref.SoftReference
 
 class CoreProxyOnlyService : Service(), ServiceControl {
-    private var lanSharingStarted = false
-
     /**
      * Initializes the service.
      */
@@ -37,12 +32,6 @@ class CoreProxyOnlyService : Service(), ServiceControl {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         LogUtil.i(AppConfig.TAG, "StartCore-Proxy: Service command received")
         CoreServiceManager.startCoreLoop(null)
-
-        // Optional root feature: share the proxy with tethered LAN/USB clients.
-        if (RootManager.cachedRoot() && MmkvManager.decodeSettingsBool(AppConfig.PREF_ROOT_LAN_SHARING)) {
-            lanSharingStarted = true
-            Thread { RootProxyManager.startClientSharing(this) }.apply { isDaemon = true }.start()
-        }
         return START_STICKY
     }
 
@@ -51,10 +40,6 @@ class CoreProxyOnlyService : Service(), ServiceControl {
      */
     override fun onDestroy() {
         super.onDestroy()
-        if (lanSharingStarted) {
-            lanSharingStarted = false
-            RootProxyManager.stop(this)
-        }
         CoreServiceManager.stopCoreLoop()
     }
 
