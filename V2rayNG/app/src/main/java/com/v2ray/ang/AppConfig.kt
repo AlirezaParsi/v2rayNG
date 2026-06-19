@@ -199,15 +199,11 @@ object AppConfig {
     /** Run-mode values stored under [PREF_MODE]. VPN / PROXY_ONLY need no root. */
     const val MODE_VPN = VPN
     const val MODE_PROXY_ONLY = "Proxy only"
-    const val MODE_REDIRECT = "Redirect"
-    const val MODE_TUN2SOCKS = "Tun2socks"
-    const val MODE_TPROXY = "TPROXY"
+    const val MODE_TUN2SOCKS = "Tun2socks"   // shown as "Root mode" in the UI
 
     /** Root (system-wide) mode runtime constants. */
     const val ROOT_RUNTIME_DIR = "root"
     const val ROOT_IPTABLES_CHAIN = "V2RAY_NG"
-    const val PORT_REDIRECT = "12346"
-    const val PORT_TPROXY = "12345"
     const val ROOT_FWMARK = 255            // tun2socks tags its own upstream sockets with this
     const val ROOT_MARK_ROUTE = 1          // packets we want pushed into the tun device
     const val ROOT_ROUTE_TABLE = 2024

@@ -10,18 +10,17 @@ import java.io.File
 
 /**
  * Installs and removes the iptables / ip-rule routing that pushes system-wide traffic
- * into the core for the root run modes.
+ * into the core for the root run mode ("Root mode", [ERunMode.TUN2SOCKS]).
  *
- * All rules live in dedicated chains ([AppConfig.ROOT_IPTABLES_CHAIN], present in the
- * nat table for REDIRECT and the mangle table for TUN2SOCKS) plus a dedicated routing
- * table / ip rule, so [teardown] is a clean, bounded flush. Teardown runs before every
- * setup (to clear stale rules) and on every stop path — leaving rules behind after the
- * core dies would break the device's connectivity.
+ * A bundled `tun2socks` binary (run as root) creates a tun device and forwards it to the
+ * in-process core's SOCKS inbound; a mangle MARK chain plus a dedicated routing table /
+ * ip rule steer all traffic into the tun. Full TCP + UDP.
  *
- * - [ERunMode.REDIRECT]: TCP NAT redirect into the in-process core's dokodemo inbound.
- * - [ERunMode.TUN2SOCKS]: a bundled `tun2socks` binary (run as root) creates a tun
- *   device and forwards it to the in-process core's SOCKS inbound; marked packets are
- *   routed into the tun. Full TCP + UDP.
+ * All rules live in dedicated chains ([AppConfig.ROOT_IPTABLES_CHAIN] in the mangle
+ * table, [AppConfig.ROOT_FWD_CHAIN] for LAN sharing) plus a dedicated routing table, so
+ * [teardown] is a clean, bounded flush. Teardown runs before every setup (to clear stale
+ * rules) and on every stop path — leaving rules behind after the core dies would break
+ * the device's connectivity.
  */
 object RootProxyManager {
 
@@ -41,7 +40,6 @@ object RootProxyManager {
     fun start(context: Context, mode: ERunMode): Boolean {
         teardown(context)
         val script = when (mode) {
-            ERunMode.REDIRECT -> buildRedirectSetup(context.applicationInfo.uid)
             ERunMode.TUN2SOCKS -> buildTun2socksSetup(context) ?: return false
             else -> {
                 LogUtil.w(AppConfig.TAG, "RootProxyManager: mode $mode not supported")
@@ -66,22 +64,6 @@ object RootProxyManager {
 
     private fun teardown(context: Context) {
         RootShell.runScript(context, "teardown_rules.sh", buildTeardown(context))
-    }
-
-    // ---------------------------------------------------------------- REDIRECT
-
-    private fun buildRedirectSetup(appUid: Int): String {
-        val port = AppConfig.PORT_REDIRECT
-        return buildString {
-            appendLine("iptables -t nat -N $CHAIN 2>/dev/null || true")
-            appendLine("iptables -t nat -F $CHAIN")
-            // Never redirect the app's own traffic (the proxy tunnel itself) -> avoid loop.
-            appendLine("iptables -t nat -A $CHAIN -m owner --uid-owner $appUid -j RETURN")
-            bypassCidrs.forEach { appendLine("iptables -t nat -A $CHAIN -d $it -j RETURN") }
-            appendLine("iptables -t nat -A $CHAIN -p tcp -j REDIRECT --to-ports $port")
-            appendLine("iptables -t nat -D OUTPUT -p tcp -j $CHAIN 2>/dev/null || true")
-            appendLine("iptables -t nat -A OUTPUT -p tcp -j $CHAIN")
-        }
     }
 
     // --------------------------------------------------------------- TUN2SOCKS
@@ -202,10 +184,6 @@ object RootProxyManager {
         val runDir = File(context.filesDir, AppConfig.ROOT_RUNTIME_DIR)
         val pidFile = File(runDir, "tun2socks.pid").absolutePath
         return buildString {
-            // nat (REDIRECT)
-            appendLine("iptables -t nat -D OUTPUT -p tcp -j $CHAIN 2>/dev/null || true")
-            appendLine("iptables -t nat -F $CHAIN 2>/dev/null || true")
-            appendLine("iptables -t nat -X $CHAIN 2>/dev/null || true")
             // mangle (TUN2SOCKS), both families
             for (cmd in listOf("iptables", "ip6tables")) {
                 appendLine("$cmd -t mangle -D OUTPUT -j $CHAIN 2>/dev/null || true")

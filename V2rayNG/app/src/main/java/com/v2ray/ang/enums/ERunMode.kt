@@ -6,8 +6,9 @@ import com.v2ray.ang.AppConfig
  * The way the core routes system traffic.
  *
  * [VPN] and [PROXY_ONLY] keep the historical behavior and need no root.
- * [REDIRECT], [TUN2SOCKS] and [TPROXY] are root-only system-wide modes that do
- * not use Android [android.net.VpnService].
+ * [TUN2SOCKS] is the root-only system-wide mode ("Root mode"): it routes all traffic
+ * through a tun device into the in-process core via a root tun2socks helper, without
+ * using Android [android.net.VpnService].
  *
  * The string [prefValue] is what gets persisted in [AppConfig.PREF_MODE]; the legacy
  * values "VPN" and "Proxy only" are preserved so existing installs keep working.
@@ -15,15 +16,7 @@ import com.v2ray.ang.AppConfig
 enum class ERunMode(val prefValue: String, val needsRoot: Boolean) {
     VPN(AppConfig.MODE_VPN, false),
     PROXY_ONLY(AppConfig.MODE_PROXY_ONLY, false),
-    REDIRECT(AppConfig.MODE_REDIRECT, true),
-    TUN2SOCKS(AppConfig.MODE_TUN2SOCKS, true),
-    TPROXY(AppConfig.MODE_TPROXY, true);
-
-    /**
-     * Whether the traffic is served by the in-process gomobile core.
-     * Only [TPROXY] runs a separate root xray binary instead.
-     */
-    fun usesInProcessCore(): Boolean = this != TPROXY
+    TUN2SOCKS(AppConfig.MODE_TUN2SOCKS, true);
 
     companion object {
         fun fromPref(value: String?): ERunMode {

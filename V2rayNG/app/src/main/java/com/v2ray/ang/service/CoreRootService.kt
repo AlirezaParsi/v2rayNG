@@ -8,7 +8,6 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.core.CoreServiceManager
 import com.v2ray.ang.core.root.RootProxyManager
-import com.v2ray.ang.handler.NotificationManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.MyContextWrapper
@@ -38,17 +37,12 @@ class CoreRootService : Service(), ServiceControl {
         val mode = SettingsManager.getRunMode()
         LogUtil.i(AppConfig.TAG, "StartCore-Root: command received, mode=$mode")
 
-        if (mode.usesInProcessCore()) {
-            // In-process core modes start the gomobile core (also posts the FGS notification).
-            if (!CoreServiceManager.startCoreLoop(null)) {
-                LogUtil.e(AppConfig.TAG, "StartCore-Root: core failed to start")
-                stopService()
-                return START_NOT_STICKY
-            }
-        } else {
-            // TPROXY runs a separate root xray binary; post the foreground notification
-            // promptly so the foreground-service start requirement is satisfied.
-            NotificationManager.showNotification(null)
+        // Start the in-process core first (this also posts the foreground notification),
+        // then install the root routing off the main thread.
+        if (!CoreServiceManager.startCoreLoop(null)) {
+            LogUtil.e(AppConfig.TAG, "StartCore-Root: core failed to start")
+            stopService()
+            return START_NOT_STICKY
         }
 
         CoroutineScope(Dispatchers.IO).launch {
