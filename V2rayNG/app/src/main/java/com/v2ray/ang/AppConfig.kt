@@ -214,6 +214,7 @@ object AppConfig {
     const val ROOT_TUN2SOCKS_BIN = "libtun2socks.so"
     const val ROOT_FWD_CHAIN = "V2RAY_NG_FWD"   // FORWARD chain for LAN/tethering sharing
     const val ROOT_LAN_DNS = "1.1.1.1"          // DNS for tethered clients (DNAT'd, then proxied)
+    const val ROOT_OOM_SCORE = "-1000"          // oom_score_adj that makes the LMK never kill us
 
     /** hev-sock5-tunnel read-write-timeout value */
     const val HEVTUN_RW_TIMEOUT = "300,60"

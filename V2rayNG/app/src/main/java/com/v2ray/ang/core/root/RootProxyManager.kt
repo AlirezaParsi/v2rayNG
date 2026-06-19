@@ -81,15 +81,20 @@ object RootProxyManager {
         val logFile = File(runDir, "tun2socks.log").absolutePath
         val ipv6 = MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED)
         val lanShare = MmkvManager.decodeSettingsBool(AppConfig.PREF_ROOT_LAN_SHARING)
+        val corePid = android.os.Process.myPid()
 
         return buildString {
             appendLine("set -e")
             appendLine("BIN='${bin.absolutePath}'")
+            // protect the core (this process) from the Android low-memory killer
+            appendLine("echo ${AppConfig.ROOT_OOM_SCORE} > /proc/$corePid/oom_score_adj 2>/dev/null || true")
             // tun device node
             appendLine("if [ ! -e /dev/net/tun ]; then mkdir -p /dev/net; mknod /dev/net/tun c 10 200; chmod 666 /dev/net/tun; fi")
             // start tun2socks (its own upstream sockets are fwmarked $FWMARK so they bypass the tun)
             appendLine("nohup \"\$BIN\" -device 'tun://$TUN' -proxy 'socks5://${AppConfig.LOOPBACK}:$port' -fwmark $FWMARK >'$logFile' 2>&1 &")
-            appendLine("echo \$! > '$pidFile'")
+            appendLine("T2S_PID=\$!")
+            appendLine("echo \$T2S_PID > '$pidFile'")
+            appendLine("echo ${AppConfig.ROOT_OOM_SCORE} > /proc/\$T2S_PID/oom_score_adj 2>/dev/null || true")
             // wait for the interface to appear
             appendLine("i=0; while [ \$i -lt 20 ]; do ip link show $TUN >/dev/null 2>&1 && break; sleep 0.3; i=\$((i+1)); done")
             appendLine("ip link show $TUN >/dev/null 2>&1 || { echo 'tun device did not come up'; exit 1; }")
@@ -183,6 +188,7 @@ object RootProxyManager {
     private fun buildTeardown(context: Context): String {
         val runDir = File(context.filesDir, AppConfig.ROOT_RUNTIME_DIR)
         val pidFile = File(runDir, "tun2socks.pid").absolutePath
+        val corePid = android.os.Process.myPid()
         return buildString {
             // mangle (TUN2SOCKS), both families
             for (cmd in listOf("iptables", "ip6tables")) {
@@ -210,6 +216,8 @@ object RootProxyManager {
             appendLine("ip link set dev $TUN down 2>/dev/null || true")
             appendLine("[ -f '$pidFile' ] && kill \$(cat '$pidFile') 2>/dev/null || true")
             appendLine("rm -f '$pidFile'")
+            // restore the core process's LMK priority
+            appendLine("echo 0 > /proc/$corePid/oom_score_adj 2>/dev/null || true")
         }
     }
 }

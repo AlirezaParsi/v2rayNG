@@ -9,6 +9,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.preference.CheckBoxPreference
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
+import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.AppConfig.VPN
@@ -17,7 +18,6 @@ import com.v2ray.ang.enums.ERunMode
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RootManager
 import com.v2ray.ang.helper.MmkvPreferenceDataStore
-import com.v2ray.ang.util.Utils
 
 class SettingsActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -97,11 +97,6 @@ class SettingsActivity : BaseActivity() {
                 true
             }
 
-            // Show a custom chooser so root modes appear greyed-out (not hidden) for non-root.
-            mode?.setOnPreferenceClickListener {
-                showModeDialog()
-                true
-            }
 
             useHevTun?.setOnPreferenceChangeListener { _, newValue ->
                 updateHevTunSettings(newValue as Boolean)
@@ -117,6 +112,17 @@ class SettingsActivity : BaseActivity() {
                 updateDynamicSocksPort(newValue as Boolean)
                 true
             }
+        }
+
+        override fun onDisplayPreferenceDialog(preference: Preference) {
+            // Use the custom chooser for the run-mode preference so root modes can be shown
+            // greyed-out; every other preference keeps the standard dialog. Intercepting here
+            // (instead of a click listener) guarantees a single dialog.
+            if (preference.key == AppConfig.PREF_MODE) {
+                showModeDialog()
+                return
+            }
+            super.onDisplayPreferenceDialog(preference)
         }
 
         private fun initPreferenceSummaries() {
@@ -259,9 +265,6 @@ class SettingsActivity : BaseActivity() {
                     updateMode(opt.value)
                     mode?.summary = labels[which]
                     dialog.dismiss()
-                }
-                .setNeutralButton(R.string.title_mode_help) { _, _ ->
-                    Utils.openUri(ctx, AppConfig.APP_WIKI_MODE)
                 }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
