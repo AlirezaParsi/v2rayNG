@@ -14,7 +14,6 @@ import androidx.preference.PreferenceFragmentCompat
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.AppConfig.VPN
 import com.v2ray.ang.R
-import com.v2ray.ang.enums.ERunMode
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RootManager
 import com.v2ray.ang.helper.MmkvPreferenceDataStore
@@ -281,9 +280,10 @@ class SettingsActivity : BaseActivity() {
             vpnInterfaceAddress?.isEnabled = vpn
             vpnMtu?.isEnabled = vpn
             useHevTun?.isEnabled = vpn
-            // LAN / tethering sharing is only meaningful for root modes; greyed otherwise
-            // (and always greyed for non-root users).
-            lanSharing?.isEnabled = ERunMode.fromPref(value).needsRoot && RootManager.cachedRoot()
+            // LAN / tethering sharing is a root capability (independent of the run mode,
+            // since it can apply to VPN mode too), so gate it on root access. Greyed for
+            // non-root users.
+            lanSharing?.isEnabled = RootManager.cachedRoot()
             updateHevTunSettings(false)
             if (vpn) {
                 updateLocalDns(
