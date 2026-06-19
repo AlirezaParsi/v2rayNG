@@ -200,7 +200,9 @@ class SettingsActivity : BaseActivity() {
             if (hasRoot) {
                 values += AppConfig.MODE_REDIRECT; labels += getString(R.string.mode_redirect)
                 values += AppConfig.MODE_TUN2SOCKS; labels += getString(R.string.mode_tun2socks)
-                values += AppConfig.MODE_TPROXY; labels += getString(R.string.mode_tproxy)
+                // TPROXY is intentionally not offered yet: it requires a bundled root xray
+                // binary (the in-process core runs as the app uid and cannot open
+                // IP_TRANSPARENT sockets). Tun2socks covers system-wide TCP+UDP for now.
             }
             mode?.entryValues = values.toTypedArray()
             mode?.entries = labels.toTypedArray()

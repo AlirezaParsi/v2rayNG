@@ -207,9 +207,14 @@ object AppConfig {
     const val ROOT_IPTABLES_CHAIN = "V2RAY_NG"
     const val PORT_REDIRECT = "12346"
     const val PORT_TPROXY = "12345"
-    const val ROOT_FWMARK = 255
+    const val ROOT_FWMARK = 255            // tun2socks tags its own upstream sockets with this
+    const val ROOT_MARK_ROUTE = 1          // packets we want pushed into the tun device
     const val ROOT_ROUTE_TABLE = 2024
     const val ROOT_RULE_PRIORITY = 1000
+    const val ROOT_TUN_NAME = "v2raytun0"
+    const val ROOT_TUN_ADDR_V4 = "198.18.0.1/15"
+    const val ROOT_TUN_ADDR_V6 = "fdfe:dcba:9876::1/64"
+    const val ROOT_TUN2SOCKS_BIN = "libtun2socks.so"
 
     /** hev-sock5-tunnel read-write-timeout value */
     const val HEVTUN_RW_TIMEOUT = "300,60"

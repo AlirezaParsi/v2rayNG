@@ -131,6 +131,11 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // Bundled root helpers are standalone executables shipped as lib*.so so the
+            // installer extracts them (executable) into nativeLibraryDir. Keep AGP from
+            // stripping them.
+            keepDebugSymbols.add("**/libtun2socks.so")
+            keepDebugSymbols.add("**/libxray.so")
         }
     }
 

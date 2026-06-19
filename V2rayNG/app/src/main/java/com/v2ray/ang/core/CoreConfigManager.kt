@@ -501,8 +501,10 @@ object CoreConfigManager {
         val vpn = SettingsManager.isVpnMode()
         val useHev = SettingsManager.isUsingHevTun()
         val forcedByHev = vpn && useHev
+        // Tun2socks (root) forwards into the in-process SOCKS inbound, so it must exist.
+        val forcedBySocksRoot = SettingsManager.getRunMode() == ERunMode.TUN2SOCKS
 
-        val enableLocalProxy = forcedByHev || MmkvManager.decodeSettingsBool(AppConfig.PREF_ENABLE_LOCAL_PROXY, true)
+        val enableLocalProxy = forcedByHev || forcedBySocksRoot || MmkvManager.decodeSettingsBool(AppConfig.PREF_ENABLE_LOCAL_PROXY, true)
 
         val socksPort = SettingsManager.getSocksPort()
         val socksUsername = SettingsManager.getSocksUsername()
