@@ -135,6 +135,10 @@ object RootProxyManager {
             // tun2socks' own upstream traffic and the app's own core traffic must not loop.
             appendLine("$cmd -t mangle -A $CHAIN -m mark --mark $FWMARK -j RETURN")
             appendLine("$cmd -t mangle -A $CHAIN -m owner --uid-owner $appUid -j RETURN")
+            // Always route DNS (even to LAN/router resolvers) through the tun so the core
+            // resolves it — prevents DNS leaks and CDN mis-resolution (e.g. Instagram media).
+            appendLine("$cmd -t mangle -A $CHAIN -p udp --dport 53 -j MARK --set-xmark $MARK")
+            appendLine("$cmd -t mangle -A $CHAIN -p tcp --dport 53 -j MARK --set-xmark $MARK")
             bypassCidrs.forEach { appendLine("$cmd -t mangle -A $CHAIN -d $it -j RETURN") }
             // system services + regular apps -> push into the tun via fwmark routing
             appendLine("$cmd -t mangle -A $CHAIN -m owner --uid-owner 1000 -j MARK --set-xmark $MARK")
@@ -184,6 +188,10 @@ object RootProxyManager {
             appendLine("ip rule add from 172.16.0.0/12 lookup $TABLE pref 5040 2>/dev/null || true")
             appendLine("ip rule add from 192.168.0.0/16 lookup $TABLE pref 5050 2>/dev/null || true")
             appendLine("ip rule add nop pref 6000 2>/dev/null || true")
+            // Reject IPv6 forwarding for tethered clients: there is no proxied v6 path, so
+            // letting it through would leak their IPv6 DNS/traffic. Forces a v4 fallback.
+            appendLine("ip6tables -D FORWARD -j REJECT --reject-with icmp6-no-route 2>/dev/null || true")
+            appendLine("ip6tables -I FORWARD -j REJECT --reject-with icmp6-no-route 2>/dev/null || true")
         }
     }
 
@@ -210,6 +218,7 @@ object RootProxyManager {
             appendLine("iptables -D FORWARD -j ${AppConfig.ROOT_FWD_CHAIN} 2>/dev/null || true")
             appendLine("iptables -F ${AppConfig.ROOT_FWD_CHAIN} 2>/dev/null || true")
             appendLine("iptables -X ${AppConfig.ROOT_FWD_CHAIN} 2>/dev/null || true")
+            appendLine("ip6tables -D FORWARD -j REJECT --reject-with icmp6-no-route 2>/dev/null || true")
             appendLine("iptables -t mangle -D FORWARD -o $TUN -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1350 2>/dev/null || true")
             for (cidr in listOf("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")) {
                 appendLine("iptables -t nat -D PREROUTING ! -i $TUN -d $cidr -p udp --dport 53 -j DNAT --to ${AppConfig.ROOT_LAN_DNS} 2>/dev/null || true")
