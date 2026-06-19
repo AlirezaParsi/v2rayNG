@@ -56,6 +56,26 @@ object RootProxyManager {
         return true
     }
 
+    /**
+     * Set up LAN/tethering sharing while the device itself uses another mode (e.g. VPN
+     * mode). Runs a dedicated client tun2socks into the in-process core's SOCKS inbound
+     * and forwards tethered clients into it, WITHOUT capturing the device's own traffic
+     * (that keeps flowing through the VpnService). Requires root.
+     */
+    fun startClientSharing(context: Context): Boolean {
+        teardown(context)
+        val script = buildTun2socksSetup(context, captureDeviceTraffic = false, forceLanShare = true)
+            ?: return false
+        val result = RootShell.runScript(context, "setup_rules.sh", script)
+        if (!result.success) {
+            LogUtil.e(AppConfig.TAG, "RootProxyManager: client sharing setup failed:\n${result.output}")
+            teardown(context)
+            return false
+        }
+        LogUtil.i(AppConfig.TAG, "RootProxyManager: LAN client sharing installed")
+        return true
+    }
+
     /** Remove all rules and stop helper processes. Safe to call repeatedly. */
     fun stop(context: Context) {
         teardown(context)
@@ -68,7 +88,18 @@ object RootProxyManager {
 
     // --------------------------------------------------------------- TUN2SOCKS
 
-    private fun buildTun2socksSetup(context: Context): String? {
+    /**
+     * @param captureDeviceTraffic when true (Root mode) the device's own OUTPUT traffic is
+     *   marked into the tun. When false (VPN-mode LAN sharing) the device keeps using the
+     *   VpnService and only forwarded clients are routed into this tun.
+     * @param forceLanShare force the LAN/tethering forward rules on regardless of the pref
+     *   (used by VPN-mode sharing, where the whole point is forwarding clients).
+     */
+    private fun buildTun2socksSetup(
+        context: Context,
+        captureDeviceTraffic: Boolean = true,
+        forceLanShare: Boolean = false,
+    ): String? {
         val bin = File(context.applicationInfo.nativeLibraryDir, AppConfig.ROOT_TUN2SOCKS_BIN)
         if (!bin.exists()) {
             LogUtil.e(AppConfig.TAG, "RootProxyManager: tun2socks binary missing at ${bin.absolutePath}")
@@ -81,7 +112,7 @@ object RootProxyManager {
         val logFile = File(runDir, "tun2socks.log").absolutePath
         val oomGuardPid = File(runDir, "oomguard.pid").absolutePath
         val ipv6 = MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED)
-        val lanShare = MmkvManager.decodeSettingsBool(AppConfig.PREF_ROOT_LAN_SHARING)
+        val lanShare = forceLanShare || MmkvManager.decodeSettingsBool(AppConfig.PREF_ROOT_LAN_SHARING)
         val corePid = android.os.Process.myPid()
 
         return buildString {
@@ -110,13 +141,15 @@ object RootProxyManager {
             appendLine("ip link set dev $TUN up")
             appendLine("ip route replace default dev $TUN table $TABLE")
             appendLine("ip rule add fwmark $MARK table $TABLE priority $PRIORITY")
-            // mark which packets go into the tun
-            append(buildMangleMarking("iptables", appUid))
+            // mark the device's own packets into the tun (Root mode only)
+            if (captureDeviceTraffic) {
+                append(buildMangleMarking("iptables", appUid))
+            }
             // optionally route hotspot / USB-tethered clients through the tun too
             if (lanShare) {
                 append(buildLanShareSetup())
             }
-            if (ipv6) {
+            if (captureDeviceTraffic && ipv6) {
                 // IPv6 is best-effort: never fail the (working) IPv4 setup over it.
                 appendLine("set +e")
                 appendLine("ip -6 addr add ${AppConfig.ROOT_TUN_ADDR_V6} dev $TUN 2>/dev/null || true")

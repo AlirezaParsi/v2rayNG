@@ -454,8 +454,10 @@ object CoreConfigManager {
         val vpn = SettingsManager.isVpnMode()
         val useHev = SettingsManager.isUsingHevTun()
         val forcedByHev = vpn && useHev
-        // Tun2socks (root) forwards into the in-process SOCKS inbound, so it must exist.
-        val forcedBySocksRoot = SettingsManager.getRunMode() == ERunMode.TUN2SOCKS
+        // Tun2socks (root) and LAN/tethering sharing both forward into the in-process SOCKS
+        // inbound (the latter even in VPN mode), so it must exist.
+        val lanShare = MmkvManager.decodeSettingsBool(AppConfig.PREF_ROOT_LAN_SHARING)
+        val forcedBySocksRoot = SettingsManager.getRunMode() == ERunMode.TUN2SOCKS || lanShare
 
         val enableLocalProxy = forcedByHev || forcedBySocksRoot || MmkvManager.decodeSettingsBool(AppConfig.PREF_ENABLE_LOCAL_PROXY, true)
 
