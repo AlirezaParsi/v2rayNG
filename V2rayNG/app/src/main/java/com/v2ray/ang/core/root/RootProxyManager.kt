@@ -38,6 +38,12 @@ object RootProxyManager {
         "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4", "240.0.0.0/4"
     )
 
+    // IPv6 equivalents (loopback, link-local, ULA/private, multicast). Feeding the v4 list
+    // above to ip6tables silently fails, so the v6 chain needs its own.
+    private val bypassCidrsV6 = listOf(
+        "::1/128", "fe80::/10", "fc00::/7", "ff00::/8"
+    )
+
     fun start(context: Context, mode: ERunMode): Boolean {
         teardown(context)
         val script = when (mode) {
@@ -162,13 +168,20 @@ object RootProxyManager {
             if (lanShare) {
                 append(buildLanShareSetup())
             }
-            if (captureDeviceTraffic && ipv6) {
+            if (captureDeviceTraffic) {
                 // IPv6 is best-effort: never fail the (working) IPv4 setup over it.
                 appendLine("set +e")
-                appendLine("ip -6 addr add ${AppConfig.ROOT_TUN_ADDR_V6} dev $TUN 2>/dev/null || true")
-                appendLine("ip -6 route replace default dev $TUN table $TABLE 2>/dev/null || true")
-                appendLine("ip -6 rule add fwmark $MARK table $TABLE priority $PRIORITY 2>/dev/null || true")
-                append(buildMangleMarking("ip6tables", appUid, perAppEnabled, bypassApps, selectedUids))
+                if (ipv6) {
+                    // route the device's v6 into the tun, same as v4
+                    appendLine("ip -6 addr add ${AppConfig.ROOT_TUN_ADDR_V6} dev $TUN 2>/dev/null || true")
+                    appendLine("ip -6 route replace default dev $TUN table $TABLE 2>/dev/null || true")
+                    appendLine("ip -6 rule add fwmark $MARK table $TABLE priority $PRIORITY 2>/dev/null || true")
+                    append(buildMangleMarking("ip6tables", appUid, perAppEnabled, bypassApps, selectedUids))
+                } else {
+                    // v6 disabled: blackhole native v6 egress for the captured apps so they
+                    // fall back to v4-through-proxy, matching what a v4-only VpnService does.
+                    append(buildV6Blackhole(appUid, perAppEnabled, bypassApps, selectedUids))
+                }
             }
         }
     }
@@ -208,8 +221,9 @@ object RootProxyManager {
             // The MARK survives a later RETURN, so the marked query still routes into the tun.
             appendLine("$cmd -t mangle -A $CHAIN -p udp --dport 53 -j MARK --set-xmark $MARK")
             appendLine("$cmd -t mangle -A $CHAIN -p tcp --dport 53 -j MARK --set-xmark $MARK")
-            // keep LAN / private destinations direct
-            bypassCidrs.forEach { appendLine("$cmd -t mangle -A $CHAIN -d $it -j RETURN") }
+            // keep LAN / private destinations direct (per-family CIDR list)
+            val cidrs = if (cmd == "ip6tables") bypassCidrsV6 else bypassCidrs
+            cidrs.forEach { appendLine("$cmd -t mangle -A $CHAIN -d $it -j RETURN") }
             if (proxyOnlySelected) {
                 // proxy only the selected apps
                 selectedUids.forEach { appendLine("$cmd -t mangle -A $CHAIN -m owner --uid-owner $it -j MARK --set-xmark $MARK") }
@@ -219,6 +233,52 @@ object RootProxyManager {
             }
             appendLine("$cmd -t mangle -D OUTPUT -j $CHAIN 2>/dev/null || true")
             appendLine("$cmd -t mangle -A OUTPUT -j $CHAIN")
+        }
+    }
+
+    /**
+     * Blackhole native IPv6 egress for the captured app population when IPv6 is NOT routed
+     * into the tun. A v4-only VpnService has no v6 route, so the kernel rejects apps' v6 and
+     * they fall back to IPv4; Root mode has to reproduce that explicitly, otherwise v6-capable
+     * apps reach destinations natively, bypassing the proxy / leaking. REJECT (not DROP) gives
+     * an instant failure so happy-eyeballs falls back to v4 without a timeout.
+     *
+     * Exemptions mirror the v4 chain: the tun2socks helper (fwmark), the app's own core (uid),
+     * loopback, link-local / multicast (NDP/RA/MLD) and ULA/LAN destinations. Per-app selection
+     * is honored: in bypass mode the bypassed apps keep native v6; in proxy mode only the
+     * selected apps lose v6 (everything else stays fully direct).
+     */
+    private fun buildV6Blackhole(
+        appUid: Int,
+        perAppEnabled: Boolean,
+        bypassApps: Boolean,
+        selectedUids: List<String>,
+    ): String {
+        val chain = AppConfig.ROOT_V6_CHAIN
+        val proxyOnlySelected = perAppEnabled && !bypassApps && selectedUids.isNotEmpty()
+        val bypassSelected = perAppEnabled && bypassApps && selectedUids.isNotEmpty()
+        val reject = "-j REJECT --reject-with icmp6-adm-prohibited"
+        return buildString {
+            appendLine("ip6tables -t filter -N $chain 2>/dev/null || true")
+            appendLine("ip6tables -t filter -F $chain")
+            // never touch the helper, the core, loopback, NDP/link-local/multicast or LAN
+            appendLine("ip6tables -t filter -A $chain -m mark --mark $FWMARK -j RETURN")
+            appendLine("ip6tables -t filter -A $chain -m owner --uid-owner $appUid -j RETURN")
+            appendLine("ip6tables -t filter -A $chain -o lo -j RETURN")
+            bypassCidrsV6.forEach { appendLine("ip6tables -t filter -A $chain -d $it -j RETURN") }
+            // bypass mode: bypassed apps keep their native v6
+            if (bypassSelected) {
+                selectedUids.forEach { appendLine("ip6tables -t filter -A $chain -m owner --uid-owner $it -j RETURN") }
+            }
+            if (proxyOnlySelected) {
+                // proxy mode: only the selected apps lose v6 (so they fall back to v4-via-proxy)
+                selectedUids.forEach { appendLine("ip6tables -t filter -A $chain -m owner --uid-owner $it $reject") }
+            } else {
+                // all-apps / bypass: reject everyone left
+                appendLine("ip6tables -t filter -A $chain $reject")
+            }
+            appendLine("ip6tables -t filter -D OUTPUT -j $chain 2>/dev/null || true")
+            appendLine("ip6tables -t filter -A OUTPUT -j $chain")
         }
     }
 
@@ -279,6 +339,10 @@ object RootProxyManager {
                 appendLine("$cmd -t mangle -F $CHAIN 2>/dev/null || true")
                 appendLine("$cmd -t mangle -X $CHAIN 2>/dev/null || true")
             }
+            // IPv6 blackhole chain (only set up when v6 is disabled; harmless if absent)
+            appendLine("ip6tables -t filter -D OUTPUT -j ${AppConfig.ROOT_V6_CHAIN} 2>/dev/null || true")
+            appendLine("ip6tables -t filter -F ${AppConfig.ROOT_V6_CHAIN} 2>/dev/null || true")
+            appendLine("ip6tables -t filter -X ${AppConfig.ROOT_V6_CHAIN} 2>/dev/null || true")
             // routing rule + table
             appendLine("ip rule del fwmark $MARK table $TABLE priority $PRIORITY 2>/dev/null || true")
             appendLine("ip -6 rule del fwmark $MARK table $TABLE priority $PRIORITY 2>/dev/null || true")
