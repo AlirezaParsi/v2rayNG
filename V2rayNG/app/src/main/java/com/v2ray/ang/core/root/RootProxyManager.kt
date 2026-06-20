@@ -198,9 +198,18 @@ object RootProxyManager {
                 selectedUids.forEach { appendLine("$cmd -t mangle -A $CHAIN -m owner --uid-owner $it -j RETURN") }
             }
             // Route DNS through the core for the proxied population (prevents DNS leaks and
-            // CDN mis-resolution, e.g. Instagram media). Skipped in proxy-only mode, where
-            // only the selected uids' own traffic is captured.
-            if (!proxyOnlySelected) {
+            // CDN mis-resolution, e.g. Instagram media). This MUST run before the LAN-bypass
+            // RETURNs below, otherwise a query to a LAN/router resolver (192.168.x / 10.x)
+            // would be returned direct and resolved by the local ISP resolver. The MARK
+            // survives a later RETURN, so the marked query still routes into the tun.
+            if (proxyOnlySelected) {
+                // proxy mode: only the selected apps' DNS goes through the core.
+                selectedUids.forEach {
+                    appendLine("$cmd -t mangle -A $CHAIN -m owner --uid-owner $it -p udp --dport 53 -j MARK --set-xmark $MARK")
+                    appendLine("$cmd -t mangle -A $CHAIN -m owner --uid-owner $it -p tcp --dport 53 -j MARK --set-xmark $MARK")
+                }
+            } else {
+                // all-apps / bypass: the whole proxied population's DNS goes through the core.
                 appendLine("$cmd -t mangle -A $CHAIN -p udp --dport 53 -j MARK --set-xmark $MARK")
                 appendLine("$cmd -t mangle -A $CHAIN -p tcp --dport 53 -j MARK --set-xmark $MARK")
             }
