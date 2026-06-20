@@ -212,6 +212,10 @@ object AppConfig {
     const val ROOT_TUN_ADDR_V4 = "198.18.0.1/15"
     const val ROOT_TUN_ADDR_V6 = "fdfe:dcba:9876::1/64"
     const val ROOT_TUN2SOCKS_BIN = "libtun2socks.so"
+    // tun2socks (xjasonlyu) tuning with no equivalent app setting. The throughput win on
+    // high-latency proxy links is `-tcp-auto-tuning` (a flag); the MTU is taken from the
+    // existing VPN MTU setting, not hardcoded here.
+    const val ROOT_TUN_UDP_TIMEOUT = "120s"    // keep UDP/QUIC sessions alive longer
     const val ROOT_FWD_CHAIN = "V2RAY_NG_FWD"   // FORWARD chain for LAN/tethering sharing
     const val ROOT_LAN_DNS = "1.1.1.1"          // DNS for tethered clients (DNAT'd, then proxied)
     const val ROOT_OOM_SCORE = "-1000"          // oom_score_adj that makes the LMK never kill us

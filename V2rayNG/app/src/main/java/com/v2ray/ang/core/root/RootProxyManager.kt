@@ -136,8 +136,10 @@ object RootProxyManager {
             appendLine("echo \$! > '$oomGuardPid'")
             // tun device node
             appendLine("if [ ! -e /dev/net/tun ]; then mkdir -p /dev/net; mknod /dev/net/tun c 10 200; chmod 666 /dev/net/tun; fi")
-            // start tun2socks (its own upstream sockets are fwmarked $FWMARK so they bypass the tun)
-            appendLine("nohup \"\$BIN\" -device 'tun://$TUN' -proxy 'socks5://${AppConfig.LOOPBACK}:$port' -fwmark $FWMARK >'$logFile' 2>&1 &")
+            // start tun2socks (its own upstream sockets are fwmarked $FWMARK so they bypass
+            // the tun). -tcp-auto-tuning fixes the BDP bottleneck on high-latency proxy links;
+            // MTU comes from the existing VPN MTU setting.
+            appendLine("nohup \"\$BIN\" -device 'tun://$TUN' -proxy 'socks5://${AppConfig.LOOPBACK}:$port' -fwmark $FWMARK -mtu ${SettingsManager.getVpnMtu()} -tcp-auto-tuning -udp-timeout ${AppConfig.ROOT_TUN_UDP_TIMEOUT} >'$logFile' 2>&1 &")
             appendLine("T2S_PID=\$!")
             appendLine("echo \$T2S_PID > '$pidFile'")
             appendLine("echo ${AppConfig.ROOT_OOM_SCORE} > /proc/\$T2S_PID/oom_score_adj 2>/dev/null || true")
@@ -197,22 +199,15 @@ object RootProxyManager {
             if (bypassSelected) {
                 selectedUids.forEach { appendLine("$cmd -t mangle -A $CHAIN -m owner --uid-owner $it -j RETURN") }
             }
-            // Route DNS through the core for the proxied population (prevents DNS leaks and
-            // CDN mis-resolution, e.g. Instagram media). This MUST run before the LAN-bypass
-            // RETURNs below, otherwise a query to a LAN/router resolver (192.168.x / 10.x)
-            // would be returned direct and resolved by the local ISP resolver. The MARK
-            // survives a later RETURN, so the marked query still routes into the tun.
-            if (proxyOnlySelected) {
-                // proxy mode: only the selected apps' DNS goes through the core.
-                selectedUids.forEach {
-                    appendLine("$cmd -t mangle -A $CHAIN -m owner --uid-owner $it -p udp --dport 53 -j MARK --set-xmark $MARK")
-                    appendLine("$cmd -t mangle -A $CHAIN -m owner --uid-owner $it -p tcp --dport 53 -j MARK --set-xmark $MARK")
-                }
-            } else {
-                // all-apps / bypass: the whole proxied population's DNS goes through the core.
-                appendLine("$cmd -t mangle -A $CHAIN -p udp --dport 53 -j MARK --set-xmark $MARK")
-                appendLine("$cmd -t mangle -A $CHAIN -p tcp --dport 53 -j MARK --set-xmark $MARK")
-            }
+            // Route DNS through the core for ALL modes, with no uid filter. On Android the
+            // DNS query is sent by netd (a shared system uid) on behalf of the app, not under
+            // the app's own uid, so it can't be attributed to a selected uid via owner-match.
+            // This MUST also run before the LAN-bypass RETURNs below, otherwise a query to a
+            // LAN/router resolver (192.168.x / 10.x) would be returned direct and resolved by
+            // the local ISP resolver (DNS leak + CDN mis-resolution, e.g. Instagram media).
+            // The MARK survives a later RETURN, so the marked query still routes into the tun.
+            appendLine("$cmd -t mangle -A $CHAIN -p udp --dport 53 -j MARK --set-xmark $MARK")
+            appendLine("$cmd -t mangle -A $CHAIN -p tcp --dport 53 -j MARK --set-xmark $MARK")
             // keep LAN / private destinations direct
             bypassCidrs.forEach { appendLine("$cmd -t mangle -A $CHAIN -d $it -j RETURN") }
             if (proxyOnlySelected) {
