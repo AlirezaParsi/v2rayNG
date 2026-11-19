@@ -248,14 +248,14 @@ object RootTproxyManager {
             appendLine("ip route replace local default dev lo table $TABLE")
             appendLine("ip rule add fwmark $MARK table $TABLE priority $PRIORITY")
 
-            append(buildOutputMarking("iptables", caps.antiSpoof(false)!!, appUid, perAppEnabled, bypassApps, selectedUids))
+            append(buildOutputMarking("iptables", caps.antiSpoof(false)!!, appUid, perAppEnabled, bypassApps, selectedUids, lanShare))
             append(buildTproxyChain("iptables", lanShare, RootProxyManager.bypassCidrs, caps.replyGuard(false)!!, caps.addrType4))
 
             appendLine("set +e")
             if (ipv6) {
                 appendLine("ip -6 route replace local default dev lo table $TABLE 2>/dev/null || true")
                 appendLine("ip -6 rule add fwmark $MARK table $TABLE priority $PRIORITY 2>/dev/null || true")
-                append(buildOutputMarking("ip6tables", caps.antiSpoof(true)!!, appUid, perAppEnabled, bypassApps, selectedUids))
+                append(buildOutputMarking("ip6tables", caps.antiSpoof(true)!!, appUid, perAppEnabled, bypassApps, selectedUids, lanShare))
                 append(buildTproxyChain("ip6tables", lanShare, RootProxyManager.bypassCidrsV6, caps.replyGuard(true)!!, caps.addrType6))
             } else {
                 // v6 disabled: blackhole native v6 egress so v6-capable apps fall back to
@@ -326,6 +326,7 @@ object RootTproxyManager {
         perAppEnabled: Boolean,
         bypassApps: Boolean,
         selectedUids: List<String>,
+        lanShare: Boolean,
     ): String {
         val allowMode = perAppEnabled && !bypassApps
         val bypassSelected = perAppEnabled && bypassApps && selectedUids.isNotEmpty()
@@ -346,6 +347,8 @@ object RootTproxyManager {
             // shared uid, so owner-match cannot attribute it to the app. Must precede the LAN
             // RETURNs, or a query aimed at a router/LAN resolver would go direct and be
             // answered by the local ISP resolver (leak + CDN mis-resolution).
+            // Hotspot clients' DNS (netd, AID_DNS_TETHER): see RootProxyManager.buildMangleMarking.
+            if (!lanShare) appendLine("$cmd -t mangle -A $OUT_CHAIN -m owner --uid-owner ${AppConfig.ROOT_DNS_TETHER_UID} -j RETURN")
             appendLine("$cmd -t mangle -A $OUT_CHAIN -p udp --dport 53 -j MARK --set-xmark $MARK")
             appendLine("$cmd -t mangle -A $OUT_CHAIN -p tcp --dport 53 -j MARK --set-xmark $MARK")
             cidrs.forEach { appendLine("$cmd -t mangle -A $OUT_CHAIN -d $it -j RETURN") }
